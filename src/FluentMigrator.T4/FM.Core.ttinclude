@@ -117,6 +117,8 @@ public class FKey
     public string ToTable;
 	public string FromColumn;
 	public string ToColumn;
+	public bool CascadeDelete;
+	public bool CascadeUpdate;	
 }
 
 
@@ -737,8 +739,28 @@ class SqlServerSchemaReader : SchemaReader
 
     List<FKey> LoadFKeys(string tblName)
     {
-        var result=new List<FKey>();
-		return result;		
+        using (var cmd = _factory.CreateCommand())
+        {
+            cmd.Connection = _connection;
+            cmd.CommandText = string.Format(FKEY_INFO_SQL);
+			cmd.Parameters.Add(new SqlParameter("@tblName", tblName));
+
+            var result = new List<FKey>();
+            using (var rdr = cmd.ExecuteReader())
+            {
+                while (rdr.Read())
+                {
+                    var key = new FKey();
+                    key.ToTable    = (string)rdr["Table"];
+					key.ToColumn   = (string)rdr["To"];
+					key.FromColumn = (string)rdr["From"];
+					key.CascadeDelete = (bool)rdr["CascadeDelete"];
+					key.CascadeUpdate = (bool)rdr["CascadeUpdate"];
+                    result.Add(key);
+                }
+            }
+            return result;
+        }
 	}
 	
     string GetPK(string table){
@@ -847,7 +869,25 @@ class SqlServerSchemaReader : SchemaReader
         FROM  INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_NAME=@tableName AND TABLE_SCHEMA=@schemaName
         ORDER BY OrdinalPosition ASC";
-      
+
+      const string FKEY_INFO_SQL = @"SELECT 
+			columnsA.name AS [From] , tablesB.name AS [Table], columnsB.name AS [To]
+			, cast((case when (fk.delete_referential_action_desc = 'CASCADE') then 1 else 0 end) as bit) as [CascadeDelete]
+			, cast((case when (fk.update_referential_action_desc = 'CASCADE') then 1 else 0 end) as bit) as [CascadeUpdate]
+		FROM sys.foreign_key_columns fkc 
+		JOIN sys.columns AS columnsA 
+			ON fkc.parent_object_id = columnsA.object_id
+			AND fkc.parent_column_id = columnsA.column_id
+		JOIN sys.columns AS columnsB 
+			ON fkc.referenced_object_id = columnsB.object_id
+			AND fkc.referenced_column_id = columnsB.column_id
+		JOIN sys.tables AS tablesA 
+			ON fkc.parent_object_id = tablesA.object_id
+		JOIN sys.tables AS tablesB 
+			ON fkc.referenced_object_id = tablesB.object_id
+		JOIN sys.foreign_keys fk 
+			ON fkc.constraint_object_id = fk.object_id
+		WHERE tablesA.object_id = OBJECT_ID(@tblName)";
 }
 
 class SqlServerCeSchemaReader : SchemaReader
